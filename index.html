@@ -2214,6 +2214,7 @@ let holdTimer = null;
 // inputLock holds a string tag of the current owner ("hold", "auto", "drag"), or
 // null when idle.
 let inputLock = null;
+let _holdOwner = null;                    // the button that currently owns "hold"
 function lockInput(tag){ if(inputLock) return false; inputLock = tag; return true; }
 function unlockInput(tag){ if(inputLock === tag) inputLock = null; }
 function inputBusy(){ return inputLock !== null; }
@@ -2222,6 +2223,7 @@ function startHold(btn){
   if(!btn) return;
   if(btn._holdRepeat) return;            // already held — don't stack intervals
   if(!lockInput("hold")) return;         // another gesture owns the input → ignore
+  _holdOwner = btn;                      // remember which button owns the lock
   btn._holdRepeat = "pending";           // mark ownership immediately
   const n = +btn.dataset.n;
   btn.classList.add("held");
@@ -2234,6 +2236,13 @@ function startHold(btn){
   }, 95);
 }
 function stopHold(btn){
+  // A button that was BLOCKED (never acquired the lock) must NOT run the release
+  // path — otherwise lifting a blocked second finger would free the FIRST
+  // finger's lock (the multitouch leak). Only the owning button releases.
+  if(btn && btn !== _holdOwner){
+    btn.classList.remove("held");        // clear any stray visual state only
+    return;
+  }
   if(btn){
     btn.classList.remove("held");
     if(btn._holdRepeat){ if(btn._holdRepeat !== "pending") clearInterval(btn._holdRepeat); btn._holdRepeat = null; }
@@ -2244,6 +2253,7 @@ function stopHold(btn){
       if(b._holdRepeat){ if(b._holdRepeat !== "pending") clearInterval(b._holdRepeat); b._holdRepeat = null; }
     });
   }
+  _holdOwner = null;
   unlockInput("hold");                   // release the lock for the next gesture
   // let the painting settle, then breathing resumes
   setTimeout(()=>{ painting = false; }, 250);
@@ -2597,13 +2607,10 @@ async function connectWallet(){
 (function initWallet(){
   const eth = window.ethereum;
   if(!eth){ return; }
-  // restore an already-authorized session without prompting
-  eth.request({ method:"eth_accounts" }).then(a=>{
-    if(a && a.length){
-      account = a[0];
-      eth.request({ method:"eth_chainId" }).then(c=>{ chainId = c; renderWallet(); });
-    }
-  }).catch(()=>{});
+  // We intentionally DO NOT reach out to the wallet on load — no eth_accounts,
+  // no prompt, nothing. The page leaves the wallet completely untouched until
+  // the user clicks Connect or tries to mint. We only subscribe to change events
+  // so that IF they connect later, account/network updates are reflected.
   eth.on && eth.on("accountsChanged", a=>{
     account = (a && a.length) ? a[0] : null;
     renderWallet();
